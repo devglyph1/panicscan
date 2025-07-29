@@ -14,7 +14,7 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// Checker holds the state for the analysis.
+// / Checker holds the state for the analysis.
 type Checker struct {
 	Panics       []report.PanicInfo
 	ExcludedDirs map[string]bool
@@ -52,6 +52,12 @@ func (c *Checker) CheckDir(path string) ([]report.PanicInfo, error) {
 		return nil, fmt.Errorf("failed to load packages: %w", err)
 	}
 
+	// Get the current working directory to resolve relative exclude paths against.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("could not get current working directory: %w", err)
+	}
+
 	// Iterate over each loaded package.
 	for _, pkg := range pkgs {
 		// Report errors but continue analysis if possible.
@@ -66,11 +72,15 @@ func (c *Checker) CheckDir(path string) ([]report.PanicInfo, error) {
 
 		// Check if the package should be excluded.
 		if len(pkg.GoFiles) > 0 {
+			// The paths in pkg.GoFiles are already absolute.
 			pkgDir := filepath.Dir(pkg.GoFiles[0])
 			isExcluded := false
 			for excludedDir := range c.ExcludedDirs {
-				// Check if the package directory is a subdirectory of an excluded directory.
-				if strings.HasPrefix(pkgDir, excludedDir) {
+				// Create an absolute path for the excluded directory relative to the CWD.
+				absExcludedDir := filepath.Join(cwd, excludedDir)
+
+				// Check if the package directory is the same as or a subdirectory of the excluded directory.
+				if strings.HasPrefix(pkgDir, absExcludedDir) {
 					isExcluded = true
 					break
 				}
@@ -101,7 +111,7 @@ func (c *Checker) CheckDir(path string) ([]report.PanicInfo, error) {
 
 // runChecks runs all registered checks on a given AST node.
 func (c *Checker) runChecks(fset *token.FileSet, info *types.Info, file *ast.File, node ast.Node, state *checks.StateTracker) {
-	// c.Panics = append(c.Panics, checks.CheckExplicitPanic(fset, node, info)...)
+	c.Panics = append(c.Panics, checks.CheckExplicitPanic(fset, node, info)...)
 	c.Panics = append(c.Panics, checks.CheckDivisionByZero(fset, node)...)
 	c.Panics = append(c.Panics, checks.CheckNilDereference(fset, node, info, state)...)
 	c.Panics = append(c.Panics, checks.CheckSliceBounds(fset, node, info)...)
