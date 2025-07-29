@@ -5,7 +5,7 @@ import (
 	"go/types"
 )
 
-type VariableState int
+type VariableState int8
 
 const (
 	Unknown VariableState = iota
@@ -27,6 +27,13 @@ func (st *StateTracker) VisitAssign(name string, state VariableState) {
 
 func (st *StateTracker) State(name string) VariableState {
 	return st.varStates[name]
+}
+
+func merge(a, b VariableState) VariableState {
+	if a == b {
+		return a
+	}
+	return Unknown
 }
 
 // Example walk showing how to hook up state tracker to AST

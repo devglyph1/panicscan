@@ -8,33 +8,29 @@ import (
 	"github.com/devglyph1/panicscan/pkg/report"
 )
 
-// checkUnsafeTypeAssertion flags type assertions not protected by the ", ok" idiom.
-func checkUnsafeTypeAssertion(fset *token.FileSet, f ast.Node, typesInfo *types.Info, file string, r *report.Report) {
-	// Collect all type assertions used in two-value assignments
-	twoValue := make(map[*ast.TypeAssertExpr]struct{})
-
-	ast.Inspect(f, func(n ast.Node) bool {
-		assign, ok := n.(*ast.AssignStmt)
-		if !ok || len(assign.Lhs) != 2 || len(assign.Rhs) != 1 {
-			return true
-		}
-		if tae, ok := assign.Rhs[0].(*ast.TypeAssertExpr); ok {
-			twoValue[tae] = struct{}{}
+// flags unsafe single-value type assertions.
+// The two-value form (x, ok := v.(T)) is considered safe.
+func checkUnsafeTypeAssertion(fset *token.FileSet, root ast.Node, _ *types.Info, file string, rep *report.Report) {
+	// gather assertions used in two-value assignments
+	okProtected := map[*ast.TypeAssertExpr]struct{}{}
+	ast.Inspect(root, func(n ast.Node) bool {
+		if as, ok := n.(*ast.AssignStmt); ok && len(as.Lhs) == 2 && len(as.Rhs) == 1 {
+			if tae, ok := as.Rhs[0].(*ast.TypeAssertExpr); ok {
+				okProtected[tae] = struct{}{}
+			}
 		}
 		return true
 	})
-
-	ast.Inspect(f, func(n ast.Node) bool {
+	ast.Inspect(root, func(n ast.Node) bool {
 		tae, ok := n.(*ast.TypeAssertExpr)
-		if !ok {
+		if !ok || tae.Type == nil {
 			return true
 		}
-		// Ignore if used in a two-value assignment
-		if _, found := twoValue[tae]; found {
+		if _, protected := okProtected[tae]; protected {
 			return true
 		}
 		pos := fset.Position(tae.Pos())
-		r.Add(file, pos.Line, pos.Column, "Potential unsafe type assertion: missing 'ok' check")
+		rep.Error(file, pos.Line, pos.Column, "unsafe type assertion: use the \", ok\" form to avoid panics")
 		return true
 	})
 }

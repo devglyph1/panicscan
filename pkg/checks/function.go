@@ -8,16 +8,24 @@ import (
 	"github.com/devglyph1/panicscan/pkg/report"
 )
 
-func checkNilFuncCall(fset *token.FileSet, f ast.Node, typesInfo *types.Info, file string, r *report.Report) {
-	ast.Inspect(f, func(n ast.Node) bool {
+// calling a nil function variable panics.  Flag only if the callee is
+// a plain identifier of func type; anything more complex would need
+// interprocedural data-flow to be certain.
+func checkNilFuncCall(fset *token.FileSet, root ast.Node, ti *types.Info, file string, rep *report.Report) {
+	ast.Inspect(root, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		// If call.Fun is an identifier and refers to a function variable, check assignment
-		// TODO: track variable initialization
+		id, ok := call.Fun.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if _, ok := ti.ObjectOf(id).Type().Underlying().(*types.Signature); !ok {
+			return true
+		}
 		pos := fset.Position(call.Lparen)
-		r.Add(file, pos.Line, pos.Column, "Potential call to nil function variable")
+		rep.Warning(file, pos.Line, pos.Column, "calling function variable that may be nil")
 		return true
 	})
 }

@@ -4,30 +4,36 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/devglyph1/panicscan/pkg/checker"
 )
 
 func main() {
-	excludeFlag := flag.String("exclude-dirs", "", "comma separated list of dirs to exclude from scan")
+	excludeFlag := flag.String("exclude-dirs", "",
+		"comma-separated list of relative directories to exclude (e.g. \"vendor,tests,mocks\")")
+	workers := flag.Int("workers", runtime.NumCPU(),
+		"maximum number of parallel files analysed (defaults to GOMAXPROCS)")
 	flag.Parse()
+
 	if flag.NArg() < 1 {
-		fmt.Println("Usage: panicscan <dir or pattern> [--exclude-dirs=...]")
+		fmt.Println("Usage: panicscan <dir|pattern> [--exclude-dirs=d1,d2] [--workers=N]")
 		os.Exit(2)
 	}
+
 	target := flag.Arg(0)
-	excludeDirs := map[string]struct{}{}
+	exclude := map[string]struct{}{}
 	if *excludeFlag != "" {
 		for _, d := range strings.Split(*excludeFlag, ",") {
-			excludeDirs[strings.TrimSpace(d)] = struct{}{}
+			exclude[strings.TrimSpace(d)] = struct{}{}
 		}
 	}
 
-	exitCode, err := checker.Run(target, excludeDirs)
+	exit, err := checker.Run(target, exclude, *workers)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "panicscan: %v\n", err)
 		os.Exit(2)
 	}
-	os.Exit(exitCode)
+	os.Exit(exit)
 }

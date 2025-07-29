@@ -2,20 +2,56 @@ package checks
 
 import (
 	"go/ast"
+	"go/constant"
+	"go/types"
 )
 
-// Helper to detect if a variable is nil-protected within the scope
-func isNilChecked(expr ast.Expr, stmt ast.Stmt) bool {
-	// Basic implementation example; can be expanded using
-	// advanced AST scanning and symbolic analysis
-	ifStmt, ok := stmt.(*ast.IfStmt)
+// isNilIdent reports whether expr is the predeclared identifier nil.
+func isNilIdent(expr ast.Expr) bool {
+	id, ok := expr.(*ast.Ident)
+	return ok && id.Name == "nil"
+}
+
+// constInt returns the integer constant value of expr, if any.
+func constInt(ti *types.Info, expr ast.Expr) (int64, bool) {
+	if tv, ok := ti.Types[expr]; ok && tv.Value != nil {
+		return constant.Int64Val(tv.Value)
+	}
+	return 0, false
+}
+
+// withinCloseWaitPattern reports true when the func literal matches the
+// safe pattern:  go func() { wg.Wait(); close(ch) }()
+func withinCloseWaitPattern(node ast.Node) bool {
+	fn, ok := node.(*ast.FuncLit)
 	if !ok {
 		return false
 	}
-	bin, ok := ifStmt.Cond.(*ast.BinaryExpr)
-	if !ok {
-		return false
-	}
-	// E.g.: if x != nil
-	return bin.Op.String() == "!="
+	var sawWait, sawClose bool
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		// Selector calls (e.g. wg.Wait(), ch.Close()).
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			switch sel.Sel.Name {
+			case "Wait":
+				sawWait = true
+			case "Close":
+				sawClose = true
+			}
+			return true
+		}
+
+		// Built-in close(ch).
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "close" {
+			sawClose = true
+		}
+		return true
+	})
+
+	return sawWait && sawClose
 }

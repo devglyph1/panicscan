@@ -8,14 +8,16 @@ import (
 	"github.com/devglyph1/panicscan/pkg/report"
 )
 
-func checkExplicitPanic(fset *token.FileSet, f ast.Node, typesInfo *types.Info, file string, r *report.Report) {
-	ast.Inspect(f, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if ok {
-			if funID, ok := call.Fun.(*ast.Ident); ok && funID.Name == "panic" {
-				pos := fset.Position(call.Pos())
-				r.Add(file, pos.Line, pos.Column, "Explicit panic call")
-			}
+// explicit panic calls are definite runtime panics ⇒ severity = error.
+func checkExplicitPanic(fset *token.FileSet, n ast.Node, _ *types.Info, file string, rep *report.Report) {
+	ast.Inspect(n, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "panic" {
+			pos := fset.Position(call.Lparen)
+			rep.Error(file, pos.Line, pos.Column, "explicit panic() call")
 		}
 		return true
 	})
