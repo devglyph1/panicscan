@@ -1,10 +1,42 @@
 package report
 
-import "go/token"
+import (
+	"fmt"
+	"sync"
+)
 
-// PanicInfo holds information about a potential panic.
-// It is in its own package to avoid import cycles between the checker and checks packages.
-type PanicInfo struct {
-	Pos     token.Position
-	Message string
+type Finding struct {
+	File string
+	Line int
+	Col  int
+	Msg  string
+}
+
+type Report struct {
+	mu       sync.Mutex
+	findings []Finding
+}
+
+func New() *Report {
+	return &Report{findings: make([]Finding, 0)}
+}
+
+func (r *Report) Add(file string, line, col int, msg string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.findings = append(r.findings, Finding{file, line, col, msg})
+}
+
+func (r *Report) Count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.findings)
+}
+
+func (r *Report) PrintAll() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, f := range r.findings {
+		fmt.Printf("- %s:%d:%d: %s\n", f.File, f.Line, f.Col, f.Msg)
+	}
 }

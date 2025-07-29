@@ -8,30 +8,24 @@ import (
 	"github.com/devglyph1/panicscan/pkg/report"
 )
 
-// CheckMapPanics detects panics related to map operations.
-func CheckMapPanics(fset *token.FileSet, node ast.Node, state *StateTracker) []report.PanicInfo {
-	var panics []report.PanicInfo
-
-	// Check for write to a nil map
-	if assignStmt, ok := node.(*ast.AssignStmt); ok {
-		if len(assignStmt.Lhs) == 1 {
-			if indexExpr, ok := assignStmt.Lhs[0].(*ast.IndexExpr); ok {
-				// Check if the expression is a map type
-				if tv := state.Info.TypeOf(indexExpr.X); tv != nil {
-					if _, ok := tv.Underlying().(*types.Map); ok {
-						if mapIdent, ok := indexExpr.X.(*ast.Ident); ok {
-							if state.GetState(mapIdent) == StateNil {
-								panics = append(panics, report.PanicInfo{
-									Pos:     fset.Position(assignStmt.Pos()),
-									Message: "Potential write to a nil map.",
-								})
-							}
-						}
-					}
-				}
+func checkNilMapWrite(fset *token.FileSet, f ast.Node, typesInfo *types.Info, file string, r *report.Report) {
+	ast.Inspect(f, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || assign.Tok != token.ASSIGN {
+			return true
+		}
+		if len(assign.Lhs) == 1 && len(assign.Rhs) == 1 {
+			indexExpr, ok := assign.Lhs[0].(*ast.IndexExpr)
+			if !ok {
+				return true
+			}
+			switch typesInfo.TypeOf(indexExpr.X).(type) {
+			case *types.Map:
+				// TODO: Track if map is nil (not trivial), just flag risk for demonstration
+				pos := fset.Position(assign.Pos())
+				r.Add(file, pos.Line, pos.Column, "Potential write to nil map")
 			}
 		}
-	}
-
-	return panics
+		return true
+	})
 }
