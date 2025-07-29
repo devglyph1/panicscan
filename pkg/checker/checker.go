@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,22 +15,48 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// / Checker holds the state for the analysis.
+// Checker holds the state for the analysis.
 type Checker struct {
 	Panics       []report.PanicInfo
 	ExcludedDirs map[string]bool
+}
+
+// visitor helps traverse the AST and keeps track of the parent nodes.
+type visitor struct {
+	checker *Checker
+	fset    *token.FileSet
+	info    *types.Info
+	state   *checks.StateTracker
+	path    []ast.Node // A stack of parent nodes
+}
+
+// Visit implements the ast.Visitor interface. It's called for each node in the AST.
+func (v *visitor) Visit(node ast.Node) ast.Visitor {
+	if node == nil {
+		v.path = v.path[:len(v.path)-1] // Pop from stack when leaving a node
+		return nil
+	}
+
+	// Run checks with the current node and its parent stack for context.
+	v.checker.runChecks(v.fset, v.info, node, v.state, v.path)
+
+	v.path = append(v.path, node) // Push to stack when entering a node
+	return v
 }
 
 // NewChecker creates a new Checker.
 func NewChecker(excludeDirsStr string) *Checker {
 	excluded := make(map[string]bool)
 	if excludeDirsStr != "" {
-		// Normalize and store the excluded directories for easy lookup.
 		dirs := strings.Split(excludeDirsStr, ",")
 		for _, d := range dirs {
-			cleanDir := filepath.Clean(strings.TrimSpace(d))
-			if cleanDir != "" {
-				excluded[cleanDir] = true
+			absPath, err := filepath.Abs(strings.TrimSpace(d))
+			if err != nil {
+				log.Printf("Warning: could not resolve exclude path %s: %v", d, err)
+				continue
+			}
+			if absPath != "" {
+				excluded[absPath] = true
 			}
 		}
 	}
@@ -40,11 +67,9 @@ func NewChecker(excludeDirsStr string) *Checker {
 
 // CheckDir analyzes all .go files matching the path pattern (e.g., "./...").
 func (c *Checker) CheckDir(path string) ([]report.PanicInfo, error) {
-	// Use go/packages to correctly load and parse all packages.
-	// This correctly handles multiple packages and the "./..." pattern.
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
-		Dir:  path, // Set the working directory for the load operation
+		Dir:  path,
 	}
 
 	pkgs, err := packages.Load(cfg, "./...")
@@ -52,57 +77,38 @@ func (c *Checker) CheckDir(path string) ([]report.PanicInfo, error) {
 		return nil, fmt.Errorf("failed to load packages: %w", err)
 	}
 
-	// Get the current working directory to resolve relative exclude paths against.
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("could not get current working directory: %w", err)
-	}
-
-	// Iterate over each loaded package.
 	for _, pkg := range pkgs {
-		// Report errors but continue analysis if possible.
 		if len(pkg.Errors) > 0 {
 			for _, e := range pkg.Errors {
-				// This provides much cleaner error reporting than before.
 				fmt.Fprintf(os.Stderr, "Error loading package %s: %v\n", pkg.ID, e)
 			}
-			// If a package has errors, its type info might be incomplete, so we skip it.
 			continue
 		}
 
-		// Check if the package should be excluded.
 		if len(pkg.GoFiles) > 0 {
-			// The paths in pkg.GoFiles are already absolute.
 			pkgDir := filepath.Dir(pkg.GoFiles[0])
 			isExcluded := false
 			for excludedDir := range c.ExcludedDirs {
-				// Create an absolute path for the excluded directory relative to the CWD.
-				absExcludedDir := filepath.Join(cwd, excludedDir)
-
-				// Check if the package directory is the same as or a subdirectory of the excluded directory.
-				if strings.HasPrefix(pkgDir, absExcludedDir) {
+				if strings.HasPrefix(pkgDir, excludedDir) {
 					isExcluded = true
 					break
 				}
 			}
 			if isExcluded {
-				continue // Skip this package
+				continue
 			}
 		}
 
-		// For each file in the now correctly-loaded package, run the checks.
 		for _, file := range pkg.Syntax {
 			state := checks.NewStateTracker(pkg.TypesInfo)
-			ast.Inspect(file, func(node ast.Node) bool {
-				if node == nil {
-					return false
-				}
-				// Run stateful analysis first to update variable states
-				state.Track(node)
-				// Run all individual checks on the node
-				c.runChecks(pkg.Fset, pkg.TypesInfo, file, node, state)
-				return true
-			})
+			// Use the custom visitor to walk the AST, providing parent context to checks.
+			vis := &visitor{
+				checker: c,
+				fset:    pkg.Fset,
+				info:    pkg.TypesInfo,
+				state:   state,
+			}
+			ast.Walk(vis, file)
 		}
 	}
 
@@ -110,12 +116,14 @@ func (c *Checker) CheckDir(path string) ([]report.PanicInfo, error) {
 }
 
 // runChecks runs all registered checks on a given AST node.
-func (c *Checker) runChecks(fset *token.FileSet, info *types.Info, file *ast.File, node ast.Node, state *checks.StateTracker) {
-	// c.Panics = append(c.Panics, checks.CheckExplicitPanic(fset, node, info)...)
+func (c *Checker) runChecks(fset *token.FileSet, info *types.Info, node ast.Node, state *checks.StateTracker, path []ast.Node) {
+	state.Track(node) // Update state first
+
+	c.Panics = append(c.Panics, checks.CheckExplicitPanic(fset, node, info)...)
 	c.Panics = append(c.Panics, checks.CheckDivisionByZero(fset, node)...)
 	c.Panics = append(c.Panics, checks.CheckNilDereference(fset, node, info, state)...)
 	c.Panics = append(c.Panics, checks.CheckSliceBounds(fset, node, info)...)
-	c.Panics = append(c.Panics, checks.CheckChannelPanics(fset, node, state)...)
+	c.Panics = append(c.Panics, checks.CheckChannelPanics(fset, node, state, path)...) // Pass path for context
 	c.Panics = append(c.Panics, checks.CheckMapPanics(fset, node, state)...)
 	c.Panics = append(c.Panics, checks.CheckTypeAssertion(fset, node, info)...)
 	c.Panics = append(c.Panics, checks.CheckNilFunctionCall(fset, node, info, state)...)
