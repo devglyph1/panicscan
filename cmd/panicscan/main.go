@@ -17,6 +17,7 @@ func main() {
 	dir := os.Args[1]
 
 	// If the user provides the `./...` pattern, interpret it as the current directory.
+	// The go/packages library will handle the recursive pattern correctly.
 	if dir == "./..." {
 		dir = "."
 	}
