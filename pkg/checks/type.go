@@ -20,21 +20,23 @@ func CheckTypeAssertion(fset *token.FileSet, node ast.Node, info *types.Info) []
 		if tv, ok := info.Types[assertExpr]; ok {
 			if _, isTuple := tv.Type.(*types.Tuple); !isTuple {
 				// This is a single-value assertion, which can panic.
-				if iface, ok := assertExpr.X.(*ast.Ident); ok {
-					// A type assertion on the literal `nil` will always panic.
-					if info.ObjectOf(iface) == types.Universe.Lookup("nil") {
+				// First, check for the guaranteed panic: assertion on a literal nil.
+				if ident, ok := assertExpr.X.(*ast.Ident); ok {
+					if info.ObjectOf(ident) == types.Universe.Lookup("nil") {
 						panics = append(panics, report.PanicInfo{
 							Pos:     fset.Position(assertExpr.Pos()),
 							Message: "Type assertion on 'nil' interface will panic.",
 						})
-					} else {
-						// Flag all other single-value assertions as potentially risky.
-						panics = append(panics, report.PanicInfo{
-							Pos:     fset.Position(assertExpr.Pos()),
-							Message: "Single-value type assertion can panic if type is wrong.",
-						})
+						return panics // No need to report twice
 					}
 				}
+
+				// For any other single-value assertion (on variables, function calls, etc.),
+				// report it as a potential panic. This fixes the bug.
+				panics = append(panics, report.PanicInfo{
+					Pos:     fset.Position(assertExpr.Pos()),
+					Message: "Single-value type assertion can panic if type is wrong.",
+				})
 			}
 		}
 	}
