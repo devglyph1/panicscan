@@ -6,6 +6,8 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/devglyph1/panicscan/pkg/checks"
 	"github.com/devglyph1/panicscan/pkg/report"
@@ -14,12 +16,26 @@ import (
 
 // Checker holds the state for the analysis.
 type Checker struct {
-	Panics []report.PanicInfo
+	Panics       []report.PanicInfo
+	ExcludedDirs map[string]bool
 }
 
 // NewChecker creates a new Checker.
-func NewChecker() *Checker {
-	return &Checker{}
+func NewChecker(excludeDirsStr string) *Checker {
+	excluded := make(map[string]bool)
+	if excludeDirsStr != "" {
+		// Normalize and store the excluded directories for easy lookup.
+		dirs := strings.Split(excludeDirsStr, ",")
+		for _, d := range dirs {
+			cleanDir := filepath.Clean(strings.TrimSpace(d))
+			if cleanDir != "" {
+				excluded[cleanDir] = true
+			}
+		}
+	}
+	return &Checker{
+		ExcludedDirs: excluded,
+	}
 }
 
 // CheckDir analyzes all .go files matching the path pattern (e.g., "./...").
@@ -46,6 +62,22 @@ func (c *Checker) CheckDir(path string) ([]report.PanicInfo, error) {
 			}
 			// If a package has errors, its type info might be incomplete, so we skip it.
 			continue
+		}
+
+		// Check if the package should be excluded.
+		if len(pkg.GoFiles) > 0 {
+			pkgDir := filepath.Dir(pkg.GoFiles[0])
+			isExcluded := false
+			for excludedDir := range c.ExcludedDirs {
+				// Check if the package directory is a subdirectory of an excluded directory.
+				if strings.HasPrefix(pkgDir, excludedDir) {
+					isExcluded = true
+					break
+				}
+			}
+			if isExcluded {
+				continue // Skip this package
+			}
 		}
 
 		// For each file in the now correctly-loaded package, run the checks.
