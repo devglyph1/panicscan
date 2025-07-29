@@ -2,7 +2,6 @@ package checker
 
 import (
 	"fmt"
-	"go/token"
 	"os"
 	"strings"
 
@@ -22,7 +21,6 @@ func Run(pattern string, excludeDirs map[string]struct{}) (int, error) {
 		return 2, err
 	}
 
-	fset := token.NewFileSet()
 	rep := report.New()
 
 	for _, pkg := range pkgs {
@@ -38,7 +36,7 @@ func Run(pattern string, excludeDirs map[string]struct{}) (int, error) {
 			if skip {
 				continue
 			}
-			checks.RunAllChecks(fset, f, pkg.TypesInfo, filepath, rep)
+			checks.RunAllChecks(pkg.Fset, f, pkg.TypesInfo, filepath, rep)
 		}
 	}
 
