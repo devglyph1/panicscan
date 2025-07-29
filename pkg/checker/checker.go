@@ -111,7 +111,7 @@ func (c *Checker) CheckDir(path string) ([]report.PanicInfo, error) {
 
 // runChecks runs all registered checks on a given AST node.
 func (c *Checker) runChecks(fset *token.FileSet, info *types.Info, file *ast.File, node ast.Node, state *checks.StateTracker) {
-	c.Panics = append(c.Panics, checks.CheckExplicitPanic(fset, node, info)...)
+	// c.Panics = append(c.Panics, checks.CheckExplicitPanic(fset, node, info)...)
 	c.Panics = append(c.Panics, checks.CheckDivisionByZero(fset, node)...)
 	c.Panics = append(c.Panics, checks.CheckNilDereference(fset, node, info, state)...)
 	c.Panics = append(c.Panics, checks.CheckSliceBounds(fset, node, info)...)
