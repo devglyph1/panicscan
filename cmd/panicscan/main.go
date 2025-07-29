@@ -16,6 +16,11 @@ func main() {
 	}
 	dir := os.Args[1]
 
+	// If the user provides the `./...` pattern, interpret it as the current directory.
+	if dir == "./..." {
+		dir = "."
+	}
+
 	// Create a new checker
 	c := checker.NewChecker()
 
