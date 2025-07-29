@@ -28,7 +28,7 @@ func main() {
 	}
 
 	// Create a new checker, passing the excluded directories
-	c := checker.NewChecker(excludeDirs)
+	c := checker.NewChecker(*excludeDirs)
 
 	// Run the checker on the specified directory
 	panics, err := c.CheckDir(dir)
