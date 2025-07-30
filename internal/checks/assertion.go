@@ -6,12 +6,33 @@ import (
 	"go/ast"
 
 	"github.com/devglyph1/panicscan/internal/report"
+	"golang.org/x/tools/go/ast/astutil"
 )
 
 // CheckTypeAssertion finds single-value type assertions that are not protected.
-func CheckTypeAssertion(r *report.Reporter, node ast.Node) {
-	// A robust check for this requires parent pointers in the AST, which `ast.Walk`
-	// doesn't provide. A more advanced analyzer (e.g., using golang.org/x/tools/go/analysis)
-	// would be needed to implement this check without a high risk of false positives.
-	// We will leave this check unimplemented to ensure accuracy.
+// It requires the AST cursor to check the parent node.
+func CheckTypeAssertion(r *report.Reporter, c *astutil.Cursor) {
+	// We are looking for x.(T)
+	assertExpr, ok := c.Node().(*ast.TypeAssertExpr)
+	if !ok {
+		return
+	}
+
+	// The safe form `v, ok := x.(T)` appears as a TypeAssertExpr
+	// as the right-hand side of an assignment statement with two
+	// variables on the left-hand side.
+	// We check the parent node to see if this is the case.
+
+	parent := c.Parent()
+	if assign, ok := parent.(*ast.AssignStmt); ok {
+		// If the parent is an assignment, check if it's a two-value assignment.
+		if len(assign.Lhs) == 2 {
+			// This is the `v, ok := ...` form, which is safe.
+			return
+		}
+	}
+
+	// If we're here, it's not a safe, two-value assignment.
+	// It's a single-value assertion that will panic on type mismatch.
+	r.Add(assertExpr.Pos(), "unprotected type assertion will panic on type mismatch")
 }
